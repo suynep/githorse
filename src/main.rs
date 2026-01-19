@@ -1,3 +1,7 @@
+use std::path::PathBuf;
+
+mod git;
+
 fn main() {
-    println!("Hello, world!");
+    git::walk_dir(PathBuf::new().join(".git"));
 }
