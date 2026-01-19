@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::{collections::BTreeMap, process::Command};
 
-use chrono::{Local, NaiveDateTime};
+use chrono::NaiveDateTime;
 
+#[derive(Debug, Clone)]
 pub struct Commit {
     pub tree: String,
     pub parent: Option<String>,
@@ -38,21 +39,31 @@ impl fmt::Display for Commit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "\nCommit {}\nTree: {}\nParent: {}\nBy: {} <{}>\nMessage: {}\n",
+            "\nCommit {}\nTree: {}\nParent: {}\nBy: {} <{}>\nMessage: {}\nAt: {}\n",
             self.commit_hash,
             self.tree,
             self.parent.clone().unwrap_or(String::from("None")),
             self.username,
             self.email,
-            self.message
+            self.message,
+            self.datetime,
         )
     }
 }
 
+#[derive(Debug)]
 pub struct Log {
     // really want to make this a BTreeMap with time as the key and
     // associated commits as a Queue
     pub commits: BTreeMap<NaiveDateTime, Vec<Commit>>,
+}
+
+impl Log {
+    pub fn new() -> Self {
+        Log {
+            commits: BTreeMap::<NaiveDateTime, Vec<Commit>>::new(),
+        }
+    }
 }
 
 // recursively navigate the parents until a .git folder is encountered
@@ -80,8 +91,9 @@ pub fn check_git(dir: PathBuf) -> bool {
     }
 }
 
-pub fn parse_commits() {
+pub fn parse_commits() -> Log {
     let mut ancestor = 0;
+    let mut log = Log::new();
     loop {
         let mut commit = Commit::new();
 
@@ -139,10 +151,10 @@ pub fn parse_commits() {
                         commit.username = username.to_string();
                         commit.email = email.to_string();
 
-                        commit.datetime = NaiveDateTime::from_timestamp_millis(
+                        commit.datetime = NaiveDateTime::from_timestamp(
                             timestamp.trim().parse::<i64>().unwrap(),
-                        )
-                        .unwrap();
+                            0,
+                        );
                     }
 
                     if i > 2 && !c.starts_with("committer") {
@@ -156,12 +168,18 @@ pub fn parse_commits() {
             }
 
             println!("{commit}");
+            log.commits
+                .entry(commit.datetime)
+                .and_modify(|v| v.push(commit.clone()))
+                .or_insert(vec![commit]);
         } else {
             println!("No output");
         }
 
         ancestor += 1;
     }
+
+    log
 }
 
 pub fn walk_dir(dir: PathBuf) {
@@ -186,6 +204,6 @@ mod test {
     }
     #[test]
     fn test_parse_commits() {
-        parse_commits();
+        println!("{:?}", parse_commits());
     }
 }
