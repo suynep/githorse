@@ -1,6 +1,5 @@
 use std::fmt;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::{collections::BTreeMap, process::Command};
 
 use chrono::NaiveDateTime;
@@ -10,9 +9,12 @@ pub struct Commit {
     pub tree: String,
     pub parent: Option<String>,
     pub commit_hash: String,
-    pub username: String,
-    pub email: String,
-    pub datetime: NaiveDateTime, // will parse later (focus on one thing at a time)
+    pub author_username: String,
+    pub author_email: String,
+    pub committer_username: String,
+    pub committer_email: String,
+    pub author_datetime: NaiveDateTime,
+    pub committer_datetime: NaiveDateTime,
     pub message: String,
 }
 
@@ -20,12 +22,22 @@ impl Commit {
     pub fn new() -> Self {
         Commit {
             tree: String::from(""),
-            parent: Some(String::from("")),
+            parent: None,
             commit_hash: String::from(""),
-            username: String::from(""),
-            email: String::from(""),
-            datetime: NaiveDateTime::parse_from_str("2002-10-05 00:00:00", "%Y-%m-%d %H:%M:%S")
-                .unwrap(), // my bday! &
+            author_username: String::from(""),
+            author_email: String::from(""),
+            committer_username: String::from(""),
+            committer_email: String::from(""),
+            author_datetime: NaiveDateTime::parse_from_str(
+                "2002-10-05 00:00:00",
+                "%Y-%m-%d %H:%M:%S",
+            )
+            .unwrap(), // my bday! &
+            committer_datetime: NaiveDateTime::parse_from_str(
+                "2002-10-05 00:00:00",
+                "%Y-%m-%d %H:%M:%S",
+            )
+            .unwrap(), // my bday! &
             // simple
             // unwrap cause
             // this works,
@@ -39,14 +51,17 @@ impl fmt::Display for Commit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "\nCommit {}\nTree: {}\nParent: {}\nBy: {} <{}>\nMessage: {}\nAt: {}\n",
+            "\nCommit {}\nTree: {}\nParent: {}\nAuthor: {} <{}>\nCommitter: {} <{}>\nMessage: {}\nAuthorAt: {}\nCommitterAt: {}\n",
             self.commit_hash,
             self.tree,
             self.parent.clone().unwrap_or(String::from("None")),
-            self.username,
-            self.email,
+            self.author_username,
+            self.author_email,
+            self.committer_username,
+            self.committer_email,
             self.message,
-            self.datetime,
+            self.author_datetime,
+            self.committer_datetime,
         )
     }
 }
@@ -54,7 +69,7 @@ impl fmt::Display for Commit {
 #[derive(Debug)]
 pub struct Log {
     // really want to make this a BTreeMap with time as the key and
-    // associated commits as a Queue
+    // associated commits as a Queue (DONE!!!! yay)
     pub commits: BTreeMap<NaiveDateTime, Vec<Commit>>,
 }
 
@@ -91,21 +106,30 @@ pub fn check_git(dir: PathBuf) -> bool {
     }
 }
 
-pub fn parse_commits() -> Log {
+pub fn parse_commits(dir: PathBuf, start_index: Option<usize>) -> Log {
+    const _BATCH_SIZE: usize = 100; // show only hundred commits on one go
     let mut ancestor = 0;
     let mut log = Log::new();
+
     loop {
+
+        if ancestor > _BATCH_SIZE {
+            break;
+        }
+
         let mut commit = Commit::new();
 
         let git_commit_cmd = Command::new("git")
             .arg("cat-file")
             .arg("commit")
             .arg(format!("HEAD~{ancestor}"))
+            .current_dir(dir.canonicalize().unwrap())
             .output();
 
         let git_head_cmd = Command::new("git")
             .arg("rev-parse")
             .arg(format!("HEAD~{ancestor}"))
+            .current_dir(dir.canonicalize().unwrap())
             .output();
 
         if let Ok(op) = git_commit_cmd {
@@ -116,6 +140,7 @@ pub fn parse_commits() -> Log {
                 let commit_str_blob_iter = commit_str_blob.split("\n");
 
                 for (i, c) in commit_str_blob_iter.enumerate() {
+                    let mut line_p = false; // is the line parsed?
                     /* note the format:
                      *      - tree
                      *      - parent (opt.)
@@ -124,41 +149,88 @@ pub fn parse_commits() -> Log {
                      *      - \n
                      *      - message
                      */
+                    println!("{i}: {c}");
                     if c.starts_with("tree") {
                         let tree_hash = c.strip_prefix("tree ").unwrap();
                         commit.tree = tree_hash.to_string();
+                        line_p = true;
                     }
 
                     if c.starts_with("parent") {
                         let parent_hash = c.strip_prefix("parent ").unwrap();
                         commit.parent = Some(parent_hash.to_string());
-                    } else {
-                        commit.parent = None;
+                        line_p = true;
                     }
 
                     if c.starts_with("author") {
                         let author_info = c.strip_prefix("author ").unwrap();
-                        let split_author_info: Vec<&str> = author_info.split(" ").collect();
+                        let mut split_author_info: Vec<&str> = author_info.split(" ").collect();
                         // note the format: username <email> timestamp tz
-                        let username = split_author_info[0];
-                        let email = split_author_info[1]
+                        let mut username = String::from("");
+                        for s in split_author_info.clone() {
+                            if !s.starts_with("<") {
+                                username.push_str(s);
+                                username.push_str(" ");
+                                println!("{username}");
+                                split_author_info.remove(0);
+                            } else {
+                                break;
+                            }
+                        }
+                        let email = split_author_info[0]
                             .strip_prefix("<")
                             .unwrap()
                             .strip_suffix(">")
                             .unwrap();
-                        let timestamp = split_author_info[2];
+                        let timestamp = split_author_info[1];
 
-                        commit.username = username.to_string();
-                        commit.email = email.to_string();
+                        commit.author_username = username.to_string();
+                        commit.author_email = email.to_string();
 
-                        commit.datetime = NaiveDateTime::from_timestamp(
+                        commit.author_datetime = NaiveDateTime::from_timestamp(
                             timestamp.trim().parse::<i64>().unwrap(),
                             0,
                         );
+                        line_p = true;
                     }
 
-                    if i > 2 && !c.starts_with("committer") {
-                        commit.message.push_str(c.trim());
+                    if c.starts_with("committer") {
+                        let author_info = c.strip_prefix("committer ").unwrap();
+                        let mut split_author_info: Vec<&str> = author_info.split(" ").collect();
+                        // note the format: username <email> timestamp tz
+                        let mut username = String::from("");
+                        for s in split_author_info.clone() {
+                            if !s.starts_with("<") {
+                                username.push_str(s);
+                                username.push_str(" ");
+                                println!("{username}");
+                                split_author_info.remove(0);
+                            } else {
+                                break;
+                            }
+                        }
+                        let email = split_author_info[0]
+                            .strip_prefix("<")
+                            .unwrap()
+                            .strip_suffix(">")
+                            .unwrap();
+                        let timestamp = split_author_info[1];
+
+                        commit.committer_username = username.to_string();
+                        commit.committer_email = email.to_string();
+
+                        commit.committer_datetime = NaiveDateTime::from_timestamp(
+                            timestamp.trim().parse::<i64>().unwrap(),
+                            0,
+                        );
+                        line_p = true;
+                    }
+
+                    // ignore the gpg signatures, and the change-id
+                    if !c.starts_with("change-id") && !line_p {
+                        if c != "\n" {
+                            commit.message.push_str(c);
+                        }
                     }
                 }
 
@@ -169,7 +241,7 @@ pub fn parse_commits() -> Log {
 
             println!("{commit}");
             log.commits
-                .entry(commit.datetime)
+                .entry(commit.committer_datetime)
                 .and_modify(|v| v.push(commit.clone()))
                 .or_insert(vec![commit]);
         } else {
@@ -204,6 +276,10 @@ mod test {
     }
     #[test]
     fn test_parse_commits() {
-        println!("{:?}", parse_commits());
+        // println!(
+        //     "{:?}",
+        //     parse_commits(PathBuf::new().join("test").join("gitlogue"))
+        // );
+        parse_commits(PathBuf::new().join("test").join("gleam"), None);
     }
 }
