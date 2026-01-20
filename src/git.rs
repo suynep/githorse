@@ -7,7 +7,7 @@ use chrono::NaiveDateTime;
 #[derive(Debug, Clone)]
 pub struct Commit {
     pub tree: String,
-    pub parent: Option<String>,
+    pub parent: Option<Vec<String>>,
     pub commit_hash: String,
     pub author_username: String,
     pub author_email: String,
@@ -51,10 +51,10 @@ impl fmt::Display for Commit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "\nCommit {}\nTree: {}\nParent: {}\nAuthor: {} <{}>\nCommitter: {} <{}>\nMessage: {}\nAuthorAt: {}\nCommitterAt: {}\n",
+            "\nCommit {}\nTree: {}\nParent: {:?}\nAuthor: {} <{}>\nCommitter: {} <{}>\nMessage: {}\nAuthorAt: {}\nCommitterAt: {}\n",
             self.commit_hash,
             self.tree,
-            self.parent.clone().unwrap_or(String::from("None")),
+            self.parent.clone().unwrap_or(vec![]),
             self.author_username,
             self.author_email,
             self.committer_username,
@@ -119,6 +119,8 @@ pub fn parse_commits(dir: PathBuf, start_index: Option<usize>) -> Log {
 
         let mut commit = Commit::new();
 
+        let mut handling_gpgsig = false;
+
         let git_commit_cmd = Command::new("git")
             .arg("cat-file")
             .arg("commit")
@@ -149,20 +151,23 @@ pub fn parse_commits(dir: PathBuf, start_index: Option<usize>) -> Log {
                      *      - \n
                      *      - message
                      */
-                    println!("{i}: {c}");
-                    if c.starts_with("tree") {
+                    // println!("{i}: {c}");
+                    if c.trim().starts_with("tree ") {
                         let tree_hash = c.strip_prefix("tree ").unwrap();
                         commit.tree = tree_hash.to_string();
                         line_p = true;
                     }
 
-                    if c.starts_with("parent") {
+                    if c.trim().starts_with("parent ") {
                         let parent_hash = c.strip_prefix("parent ").unwrap();
-                        commit.parent = Some(parent_hash.to_string());
+                        //commit.parent = Some(parent_hash.to_string());
+                        let mut cp = commit.parent.clone().unwrap_or(vec![]);
+                        cp.push(parent_hash.to_string());
+                        commit.parent = Some(cp);
                         line_p = true;
                     }
 
-                    if c.starts_with("author") {
+                    if c.trim().starts_with("author ") {
                         let author_info = c.strip_prefix("author ").unwrap();
                         let mut split_author_info: Vec<&str> = author_info.split(" ").collect();
                         // note the format: username <email> timestamp tz
@@ -171,7 +176,6 @@ pub fn parse_commits(dir: PathBuf, start_index: Option<usize>) -> Log {
                             if !s.starts_with("<") {
                                 username.push_str(s);
                                 username.push_str(" ");
-                                println!("{username}");
                                 split_author_info.remove(0);
                             } else {
                                 break;
@@ -194,7 +198,7 @@ pub fn parse_commits(dir: PathBuf, start_index: Option<usize>) -> Log {
                         line_p = true;
                     }
 
-                    if c.starts_with("committer") {
+                    if c.trim().starts_with("committer ") {
                         let author_info = c.strip_prefix("committer ").unwrap();
                         let mut split_author_info: Vec<&str> = author_info.split(" ").collect();
                         // note the format: username <email> timestamp tz
@@ -203,7 +207,6 @@ pub fn parse_commits(dir: PathBuf, start_index: Option<usize>) -> Log {
                             if !s.starts_with("<") {
                                 username.push_str(s);
                                 username.push_str(" ");
-                                println!("{username}");
                                 split_author_info.remove(0);
                             } else {
                                 break;
@@ -227,11 +230,27 @@ pub fn parse_commits(dir: PathBuf, start_index: Option<usize>) -> Log {
                     }
 
                     // ignore the gpg signatures, and the change-id
-                    if !c.starts_with("change-id") && !line_p {
+
+                    // handle gpgsig fields
+                    if c.trim().starts_with("gpgsig ") {
+                        handling_gpgsig = true;
+                    }
+
+                    if c.trim().starts_with("-----") {
+                        handling_gpgsig = false;
+                        continue;
+                    }
+
+                    if handling_gpgsig {
+                        continue;
+                    } 
+
+                    if !c.trim().starts_with("change-id ") && !line_p {
                         if c != "\n" {
                             commit.message.push_str(c);
                         }
                     }
+
                 }
 
                 if let Ok(o) = git_head_cmd {
@@ -280,6 +299,6 @@ mod test {
         //     "{:?}",
         //     parse_commits(PathBuf::new().join("test").join("gitlogue"))
         // );
-        parse_commits(PathBuf::new().join("test").join("gleam"), None);
+        parse_commits(PathBuf::new().join("test").join("gitlogue"), None);
     }
 }
