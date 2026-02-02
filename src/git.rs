@@ -81,6 +81,20 @@ impl Log {
     }
 }
 
+impl fmt::Display for Log {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, k) in self.commits.keys().enumerate() {
+            let _ = write!(f, "KEY {i}: {}\n", k);
+            for v in self.commits.get(k).unwrap() {
+                let _ = write!(f, "{}\n", v);
+            }
+            let _ = write!(f, "\n");
+        }
+
+        Ok(())
+    }
+}
+
 // recursively navigate the parents until a .git folder is encountered
 pub fn check_git(dir: PathBuf) -> bool {
     let mut current = dir;
@@ -107,7 +121,7 @@ pub fn check_git(dir: PathBuf) -> bool {
 }
 
 pub fn parse_commits(dir: PathBuf, start_index: Option<usize>) -> Log {
-    const _BATCH_SIZE: usize = 100; // show only hundred commits on one go
+    const _BATCH_SIZE: usize = 200; // show only hundred commits on one go
     let mut ancestor = 0;
     let mut log = Log::new();
 
@@ -248,17 +262,20 @@ pub fn parse_commits(dir: PathBuf, start_index: Option<usize>) -> Log {
                     if !c.trim().starts_with("change-id ") && !line_p {
                         if c != "\n" {
                             commit.message.push_str(c);
+                            commit.message.push_str("\n");
                         }
                     }
 
                 }
+
+                commit.message = commit.message.trim().to_string();
 
                 if let Ok(o) = git_head_cmd {
                     commit.commit_hash = String::from_utf8_lossy(&o.stdout).trim().to_string();
                 }
             }
 
-            println!("{commit}");
+
             log.commits
                 .entry(commit.committer_datetime)
                 .and_modify(|v| v.push(commit.clone()))
@@ -271,6 +288,22 @@ pub fn parse_commits(dir: PathBuf, start_index: Option<usize>) -> Log {
     }
 
     log
+}
+
+pub fn current_changes(dir: PathBuf) {
+    // needs a mechanism to parse the git diff commands, and a granular usage of the same
+    let diff_cmd = Command::new("git").arg("diff").arg("HEAD").arg("HEAD~1").current_dir(dir).output();
+
+    if let Ok(diff_cmd) = diff_cmd {
+        let output = String::from_utf8(diff_cmd.stdout).unwrap();
+        // split by lines
+        let output = output.split('\n');
+        for spl in output {
+            println!("{}", spl);
+        }
+    } else {
+        eprintln!("Error while invoking git diff");
+    }
 }
 
 pub fn walk_dir(dir: PathBuf) {
@@ -299,6 +332,11 @@ mod test {
         //     "{:?}",
         //     parse_commits(PathBuf::new().join("test").join("gitlogue"))
         // );
-        parse_commits(PathBuf::new().join("test").join("gitlogue"), None);
+        println!("{}", parse_commits(PathBuf::new().join("test").join("neohtop"), None));
+    }
+
+    #[test]
+    fn test_current_changes() {
+        current_changes(PathBuf::new().join("test").join("linux"));
     }
 }
